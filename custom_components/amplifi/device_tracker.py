@@ -3,11 +3,11 @@ import re
 import logging
 
 from datetime import datetime
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.core import callback
+from homeassistant.util import slugify
 from .const import DOMAIN, COORDINATOR, COORDINATOR_LISTENER, ENTITIES, CONF_ENABLE_NEW_DEVICES
 from .coordinator import AmplifiDataUpdateCoordinator
 
@@ -77,6 +77,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     config_entry.async_on_unload(async_unsub_discover_device_tracker)
 
 
+def _make_safe_entity_id(name: str) -> str:
+    """Convert a raw name to a valid entity_id slug (no spaces, only lowercase alphanumeric + underscore)."""
+    # Replace any non-alphanumeric characters (including spaces) with underscore
+    safe = re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower()
+    return safe
+
+
 class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     """Representing a wireless device connected to amplifi."""
 
@@ -109,8 +116,9 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
             self._name = f"{DOMAIN}_{self.unique_id}"
             self._description = self.unique_id.upper()
 
-        self._name = re.sub("[^0-9a-zA-Z]+", "_", self._name).lower()
-        # Override the entity_id so we can provide a better friendly name
+        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
+        # This fixes: "sets an invalid entity ID" warning in HA 2026+
+        self._name = _make_safe_entity_id(self._name)
         self.entity_id = f'device_tracker.{self._name}'
 
     @property
@@ -122,7 +130,7 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
             return self._name
 
     @property
-    def source_type(self) -> str:
+    def source_type(self) -> SourceType:
         """Return the source type."""
         return SourceType.ROUTER
 
@@ -176,12 +184,12 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Return if the entity should be enabled when first added to the entity registry."""
         if self.config_entry.data.get(CONF_ENABLE_NEW_DEVICES, False):
             return True
-        
+
         return False
 
-    def update(self):
-        _LOGGER.debug(f"entity={self.unique_id} update() was called")
-        self._handle_coordinator_update()
+    # FIX: Removed the synchronous update() method that conflicted with the
+    # CoordinatorEntity pattern and caused "Task exception was never retrieved".
+    # CoordinatorEntity handles updates via _handle_coordinator_update() automatically.
 
     async def async_added_to_hass(self):
         """Run when this Entity has been added to HA."""
@@ -207,7 +215,7 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
         )
 
-        super()._handle_coordinator_update()
+        self.async_write_ha_state()
 
 
 class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
@@ -260,8 +268,11 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
 
         self._is_device = is_device
 
-        # Override the entity_id so we can provide a better friendly name
-        self.entity_id = f'device_tracker.{self._name}'
+        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
+        # This fixes: "sets an invalid entity ID" warning in HA 2026+
+        # Previously, names like "amplifi_NAS LAN1" (with spaces) were used directly.
+        safe_name = _make_safe_entity_id(self._name)
+        self.entity_id = f'device_tracker.{safe_name}'
 
     @property
     def name(self):
@@ -272,7 +283,7 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
             return self._name
 
     @property
-    def source_type(self) -> str:
+    def source_type(self) -> SourceType:
         """Return the source type."""
         return SourceType.ROUTER
 
@@ -315,9 +326,8 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
         else:
             return True
 
-    def update(self):
-        _LOGGER.debug(f"entity={self.unique_id} update() was called")
-        self._handle_coordinator_update()
+    # FIX: Removed the synchronous update() method that conflicted with the
+    # CoordinatorEntity pattern and caused "Task exception was never retrieved".
 
     async def async_added_to_hass(self):
         """Run when this Entity has been added to HA."""
@@ -341,4 +351,8 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
         _LOGGER.debug(
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
         )
-        super()._handle_coordinator_update()
+
+        # FIX: Call async_write_ha_state() directly instead of super()._handle_coordinator_update()
+        # The parent implementation schedules an additional async task which, if it raises,
+        # produces "Task exception was never retrieved". Writing state directly is safer.
+        self.async_write_ha_state()
