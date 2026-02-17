@@ -6,7 +6,6 @@ from homeassistant.components.sensor import (
 )
 import logging
 
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.core import callback
 from homeassistant.const import UnitOfDataRate
@@ -18,12 +17,13 @@ WAN_SPEED_SENSOR_TYPES = ["download", "upload"]
 sensordeviceclass = SensorDeviceClass.DATA_RATE
 sensorstateclass = SensorStateClass.MEASUREMENT
 
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add sensors for passed config_entry in HA."""
 
     coordinator = hass.data[DOMAIN][config_entry.entry_id][COORDINATOR]
 
-    """Add internet speed sensors."""
+    # Add internet speed sensors.
     for speed_sensor_type in WAN_SPEED_SENSOR_TYPES:
         wan_sensor_unique_id = f"{DOMAIN}_wan_{speed_sensor_type}_speed"
         if (
@@ -37,6 +37,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     )
                 ]
             )
+
 
 class AmplifiWanSpeedSensor(CoordinatorEntity, SensorEntity):
     """Sensor class representing a internet speed of amplifi."""
@@ -69,7 +70,7 @@ class AmplifiWanSpeedSensor(CoordinatorEntity, SensorEntity):
     @property
     def state(self):
         """State of the sensor."""
-        return round(self._value, 3)
+        return round(self._value, 2)
 
     @property
     def icon(self):
@@ -79,11 +80,11 @@ class AmplifiWanSpeedSensor(CoordinatorEntity, SensorEntity):
     @property
     def unit_of_measurement(self):
         """Return the unit of measurement."""
-        return UnitOfDataRate.MEGABITS_PER_SECOND
+        return UnitOfDataRate.MEGABYTES_PER_SECOND
 
-    def update(self):
-        _LOGGER.debug(f"entity={self.unique_id} update() was called")
-        self._handle_coordinator_update()
+    # FIX: Removed synchronous update() method — it conflicted with CoordinatorEntity's
+    # async update pattern and caused "Task exception was never retrieved".
+    # CoordinatorEntity calls _handle_coordinator_update() automatically on each refresh.
 
     async def async_added_to_hass(self):
         """Run when this Entity has been added to HA."""
@@ -99,5 +100,8 @@ class AmplifiWanSpeedSensor(CoordinatorEntity, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self):
-        self._value = self.coordinator.wan_speeds[self._speed_sensor_type]
-        super()._handle_coordinator_update()
+        # FIX: Coordinator provides values in Mbit/s; divide by 8 to get MB/s
+        self._value = self.coordinator.wan_speeds[self._speed_sensor_type] / 8
+        # FIX: Call async_write_ha_state() directly instead of super()._handle_coordinator_update()
+        # to avoid unhandled async task exceptions (same fix as device_tracker.py).
+        self.async_write_ha_state()
