@@ -1,7 +1,6 @@
 """The Amplifi coordinator."""
 import logging
 import aiohttp
-from async_timeout import timeout
 
 from aiohttp.client_exceptions import ClientConnectorError
 from datetime import timedelta
@@ -34,7 +33,7 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
         self._router_mac_addr = None
         # Create jar for storing session cookies
         self._jar = aiohttp.CookieJar(unsafe=True)
-        # Amplifi uses session cookie so we need a we client with a cookie jar
+        # Amplifi uses session cookie so we need a web client with a cookie jar
         self._client_sesssion = async_create_clientsession(
             hass, False, True, cookie_jar=self._jar
         )
@@ -47,15 +46,22 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Data will be update every %s", update_interval)
 
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=update_interval)
-        super().async_add_listener(self.extract_wifi_devices)
-        super().async_add_listener(self.extract_ethernet_ports)
-        super().async_add_listener(self.extract_ethernet_devices)
-        super().async_add_listener(self.extract_wan_speeds)
+
+        # FIX: Use self.async_add_listener (not super().async_add_listener).
+        # Calling super().async_add_listener bypasses the coordinator's internal
+        # listener tracking, which causes "Task exception was never retrieved"
+        # because the callbacks are scheduled as bare tasks without error handling.
+        self.async_add_listener(self.extract_wifi_devices)
+        self.async_add_listener(self.extract_ethernet_ports)
+        self.async_add_listener(self.extract_ethernet_devices)
+        self.async_add_listener(self.extract_wan_speeds)
 
     async def _async_update_data(self):
         """Update data via library."""
         try:
-            async with timeout(10):
+            # FIX: async_timeout.timeout is deprecated; use asyncio.timeout instead (HA 2024+)
+            import asyncio
+            async with asyncio.timeout(10):
                 devices = await self._client.async_get_devices()
         except (AmplifiClientError, ClientConnectorError) as error:
             raise UpdateFailed(error) from error
@@ -100,19 +106,19 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
             ethernet_devices = {}
             raw_devices_info = self.data[DEVICES_INFO_IDX]
             raw_device_to_eth_index = self.data[ETHERNET_PORT_TO_DEVICE_IDX][router_mac_addr]
-    
+
             if raw_device_to_eth_index and raw_devices_info:
-                    for device in raw_device_to_eth_index:
-                        device_info = raw_devices_info[device]
-                        port = raw_device_to_eth_index[device]
-                        device_info["connected_to_port"] = port
-                        ethernet_devices[device] = device_info
-    
+                for device in raw_device_to_eth_index:
+                    device_info = raw_devices_info[device]
+                    port = raw_device_to_eth_index[device]
+                    device_info["connected_to_port"] = port
+                    ethernet_devices[device] = device_info
+
             self._ethernet_devices = ethernet_devices
-    
+
             _LOGGER.debug(f"ethernet_devices={self._ethernet_devices}")
         else:
-            _LOGGER.debug(f"No ethernet devices found")
+            _LOGGER.debug("No ethernet devices found")
             return
 
     def extract_wan_speeds(self):
@@ -123,14 +129,12 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
         wan_port_data = self.data[ETHERNET_PORTS_IDX][router_mac_addr]["eth-0"]
         if "rx_bitrate" in wan_port_data:
             self._wan_speeds["download"] = (
-                wan_port_data["rx_bitrate"] == 0
-                if 0
+                0 if wan_port_data["rx_bitrate"] == 0
                 else wan_port_data["rx_bitrate"] / 1024
             )
         if "tx_bitrate" in wan_port_data and wan_port_data["tx_bitrate"] != 0:
             self._wan_speeds["upload"] = (
-                wan_port_data["tx_bitrate"] == 0
-                if 0
+                0 if wan_port_data["tx_bitrate"] == 0
                 else wan_port_data["tx_bitrate"] / 1024
             )
 
@@ -142,7 +146,6 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
                 self._router_mac_addr = topology_data["mac"]
             elif isinstance(v, dict):
                 self.find_router_mac_in_topology(v)
-                
 
     def get_router_mac_addr(self):
         if self._router_mac_addr is None:
@@ -150,8 +153,9 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
 
         return self._router_mac_addr
 
-    def async_stop_refresh(self):
-        super._async_stop_refresh()
+    # FIX: Removed broken async_stop_refresh() — super._async_stop_refresh() is not callable
+    # (missing parentheses on super, and the method doesn't exist in DataUpdateCoordinator).
+    # HA handles coordinator shutdown automatically via config entry unload.
 
     @property
     def wifi_devices(self):
@@ -162,7 +166,7 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
     def ethernet_ports(self):
         """Return the ethernet ports."""
         return self._ethernet_ports
-    
+
     @property
     def ethernet_devices(self):
         """Return the ethernet devices."""
