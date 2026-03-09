@@ -25,7 +25,18 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     @callback
     def async_discover_device_tracker():
         """Discover and add a discovered device_tracker."""
-        for mac_addr in coordinator.wifi_devices:
+        # Add wireless devices (connected or known). If devices_info is missing,
+        # fall back to connected wifi devices only.
+        if coordinator.devices_info:
+            wireless_iter = [
+                (mac, info)
+                for mac, info in coordinator.devices_info.items()
+                if info.get("connection") == "wireless"
+            ]
+        else:
+            wireless_iter = [(mac, None) for mac in coordinator.wifi_devices]
+
+        for mac_addr, info in wireless_iter:
             if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
                 async_add_entities(
                     [
@@ -33,6 +44,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             coordinator,
                             mac_addr,
                             config_entry,
+                            info if mac_addr not in coordinator.wifi_devices else None,
                         )
                     ]
                 )
@@ -94,24 +106,40 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     unique_id = None
 
     def __init__(
-        self, coordinator: AmplifiDataUpdateCoordinator, mac_addr, config_entry
+        self, coordinator: AmplifiDataUpdateCoordinator, mac_addr, config_entry, initial_data=None
     ):
         """Initialize amplifi wireless device tracker."""
         super().__init__(coordinator)
         self.unique_id = mac_addr
-        self._data = coordinator.wifi_devices[mac_addr]
+        if initial_data is not None:
+            self._data = initial_data
+        elif mac_addr in coordinator.wifi_devices:
+            self._data = coordinator.wifi_devices[mac_addr]
+        elif mac_addr in coordinator.devices_info:
+            self._data = coordinator.devices_info[mac_addr]
+        else:
+            self._data = {}
         self.config_entry = config_entry
-        self._connected = True
+        self._connected = mac_addr in coordinator.wifi_devices
 
         if self._data is not None and "Description" in self._data:
             self._name = f"{DOMAIN}_{self._data['Description']}"
-            self._description = self._data['Description']
+            self._description = self._data["Description"]
+        elif self._data is not None and "description" in self._data:
+            self._name = f"{DOMAIN}_{self._data['description']}"
+            self._description = self._data["description"]
         elif self._data is not None and "HostName" in self._data:
             self._name = f"{DOMAIN}_{self._data['HostName']}"
-            self._description = self._data['HostName']
+            self._description = self._data["HostName"]
+        elif self._data is not None and "host_name" in self._data:
+            self._name = f"{DOMAIN}_{self._data['host_name']}"
+            self._description = self._data["host_name"]
         elif self._data is not None and "Address" in self._data:
             self._name = f"{DOMAIN}_{self._data['Address']}"
-            self._description = self._data['Address']
+            self._description = self._data["Address"]
+        elif self._data is not None and "ip" in self._data:
+            self._name = f"{DOMAIN}_{self._data['ip']}"
+            self._description = self._data["ip"]
         else:
             self._name = f"{DOMAIN}_{self.unique_id}"
             self._description = self.unique_id.upper()
@@ -148,6 +176,8 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Return the primary ip address of the device."""
         if "Address" in self._data:
             return self._data["Address"]
+        if "ip" in self._data:
+            return self._data["ip"]
 
         return None
 
@@ -161,6 +191,8 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Return hostname of the device."""
         if "HostName" in self._data:
             return self._data["HostName"]
+        if "host_name" in self._data:
+            return self._data["host_name"]
 
         return None
 
@@ -210,6 +242,8 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         if self.unique_id in self.coordinator.wifi_devices:
             self._data = self.coordinator.wifi_devices[self.unique_id]
             self._connected = True
+        elif self.unique_id in self.coordinator.devices_info:
+            self._data = self.coordinator.devices_info[self.unique_id]
 
         _LOGGER.debug(
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
