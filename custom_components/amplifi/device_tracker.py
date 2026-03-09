@@ -16,6 +16,13 @@ _LOGGER = logging.getLogger(__name__)
 ETHERNET_PORTS = 5
 
 
+def _normalize_connection(value) -> str:
+    """Normalize Amplifi connection values across firmware variants."""
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add sensors for passed config_entry in HA."""
 
@@ -26,16 +33,27 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     @callback
     def async_discover_device_tracker():
         """Discover and add a discovered device_tracker."""
-        # Add wireless devices (connected or known). If devices_info is missing,
-        # fall back to connected wifi devices only.
-        if coordinator.devices_info:
-            wireless_iter = [
-                (mac, info)
-                for mac, info in coordinator.devices_info.items()
-                if info.get("connection") == "wireless"
-            ]
-        else:
-            wireless_iter = [(mac, None) for mac in coordinator.wifi_devices]
+        # Build robust client lists. Some firmware versions use different
+        # connection labels, and some entries have missing connection fields.
+        wifi_mac_set = set(coordinator.wifi_devices.keys())
+        ethernet_mac_set = set(coordinator.ethernet_devices.keys())
+        known_info = coordinator.devices_info or {}
+        for mac, info in known_info.items():
+            conn = _normalize_connection(info.get("connection"))
+            if conn in ("wireless", "wifi", "wlan"):
+                wifi_mac_set.add(mac)
+            elif conn in ("ethernet", "lan", "wired"):
+                ethernet_mac_set.add(mac)
+            else:
+                # Unknown connection: infer from live data, default to wifi.
+                if mac in coordinator.ethernet_devices:
+                    ethernet_mac_set.add(mac)
+                else:
+                    wifi_mac_set.add(mac)
+
+        # Prevent duplicate entities when the same MAC appears in both sets.
+        ethernet_mac_set -= wifi_mac_set
+        wireless_iter = [(mac, known_info.get(mac)) for mac in wifi_mac_set]
 
         for mac_addr, info in wireless_iter:
             if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
@@ -65,16 +83,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     ]
                 )
 
-        # Add ethernet devices (connected or known). If devices_info is missing,
-        # fall back to connected ethernet devices only.
-        if coordinator.devices_info:
-            ethernet_iter = [
-                (mac, info)
-                for mac, info in coordinator.devices_info.items()
-                if info.get("connection") == "ethernet"
-            ]
-        else:
-            ethernet_iter = [(mac, None) for mac in coordinator.ethernet_devices]
+        ethernet_iter = [(mac, known_info.get(mac)) for mac in ethernet_mac_set]
 
         is_device = True
         for mac_addr, info in ethernet_iter:
