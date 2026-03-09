@@ -77,8 +77,11 @@ class AmplifiClient:
         info_async_url = self._base_url + "/info-async.php"
         _LOGGER.debug("[GET] '%s' - get info" % (info_async_url))
         await self._async_init_client()
-        form_data = {"do": "full", "token": self._info_token}
-        resp = await self._client.post(info_async_url, data=form_data)
+        # Amplifi expects a text/plain body for info-async.php, not form encoding.
+        # Example payload: do=full&token=xxxxxxxxxxxxxxxx
+        body = f"do=full&token={self._info_token}"
+        headers = {"Content-Type": "text/plain;charset=UTF-8"}
+        resp = await self._client.post(info_async_url, data=body, headers=headers)
 
         if resp.status != 200:
             raise AmplifiClientError("Expected a response code of 200.")
@@ -127,19 +130,3 @@ class AmplifiClient:
         router_mac_addr = self.get_router_mac_addr(devices)
         wan_port = devices[4][router_mac_addr]["eth-0"]
         return wan_port
-
-
-# async def main():
-#     # Note: Unsafe is required for aiohttp to accept cookies from an ip address
-#     # see: https://docs.aiohttp.org/en/stable/client_advanced.html#cookie-jar
-#     jar = aiohttp.CookieJar(unsafe=True)
-
-#     async with aiohttp.ClientSession(cookie_jar=jar) as session:
-#         amplifi = AmplifiClient(session, '192.168.0.1', 'this is not my password')
-#         devices = await amplifi.async_get_info()
-
-#         print(amplifi.get_wan_port_info(devices))
-
-
-# loop = asyncio.get_event_loop()
-# loop.run_until_complete(main())
