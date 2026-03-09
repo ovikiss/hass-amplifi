@@ -2,7 +2,7 @@
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_HOST, CONF_PASSWORD
 
 from .const import DOMAIN, COORDINATOR, ENTITIES
@@ -35,12 +35,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Setup the platforms for the amplifi integration
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    @callback
-    def async_stop_coordinator():
-        coordinator._async_stop_refresh(None)
-
-    entry.async_on_unload(async_stop_coordinator)
 
     return True
 
