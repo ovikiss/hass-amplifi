@@ -7,7 +7,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.core import callback
 from homeassistant.util import slugify
 from .const import DOMAIN, COORDINATOR, COORDINATOR_LISTENER, ENTITIES, CONF_ENABLE_NEW_DEVICES
@@ -17,27 +16,8 @@ _LOGGER = logging.getLogger(__name__)
 ETHERNET_PORTS = 5
 
 
-def _normalize_connection(value) -> str:
-    """Normalize Amplifi connection values across firmware variants."""
-    if value is None:
-        return ""
-    return str(value).strip().lower()
-
-
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add sensors for passed config_entry in HA."""
-    # Old versions created many client trackers as disabled-by-default.
-    # Re-enable them so all discovered clients become visible without manual registry edits.
-    ent_reg = er.async_get(hass)
-    for entity in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id):
-        if entity.domain != "device_tracker":
-            continue
-        if entity.unique_id is None:
-            continue
-        if str(entity.unique_id).startswith(f"{DOMAIN}_eth_port_"):
-            continue
-        if entity.disabled_by is not None:
-            ent_reg.async_update_entity(entity.entity_id, disabled_by=None)
 
     coordinator: AmplifiDataUpdateCoordinator = hass.data[DOMAIN][
         config_entry.entry_id
@@ -46,29 +26,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     @callback
     def async_discover_device_tracker():
         """Discover and add a discovered device_tracker."""
-        # Build robust client lists. Some firmware versions use different
-        # connection labels, and some entries have missing connection fields.
-        wifi_mac_set = set(coordinator.wifi_devices.keys())
-        ethernet_mac_set = set(coordinator.ethernet_devices.keys())
-        known_info = coordinator.devices_info or {}
-        for mac, info in known_info.items():
-            conn = _normalize_connection(info.get("connection"))
-            if conn in ("wireless", "wifi", "wlan"):
-                wifi_mac_set.add(mac)
-            elif conn in ("ethernet", "lan", "wired"):
-                ethernet_mac_set.add(mac)
-            else:
-                # Unknown connection: infer from live data, default to wifi.
-                if mac in coordinator.ethernet_devices:
-                    ethernet_mac_set.add(mac)
-                else:
-                    wifi_mac_set.add(mac)
-
-        # Prevent duplicate entities when the same MAC appears in both sets.
-        ethernet_mac_set -= wifi_mac_set
-        wireless_iter = [(mac, known_info.get(mac)) for mac in wifi_mac_set]
-
-        for mac_addr, info in wireless_iter:
+        for mac_addr in coordinator.wifi_devices:
             if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
                 async_add_entities(
                     [
@@ -76,7 +34,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             coordinator,
                             mac_addr,
                             config_entry,
-                            info if mac_addr not in coordinator.wifi_devices else None,
                         )
                     ]
                 )
@@ -96,10 +53,8 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     ]
                 )
 
-        ethernet_iter = [(mac, known_info.get(mac)) for mac in ethernet_mac_set]
-
         is_device = True
-        for mac_addr, info in ethernet_iter:
+        for mac_addr in coordinator.ethernet_devices:
             if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
                 async_add_entities(
                     [
@@ -108,7 +63,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             mac_addr,
                             config_entry,
                             is_device,
-                            info if mac_addr not in coordinator.ethernet_devices else None,
                         )
                     ]
                 )
@@ -131,18 +85,12 @@ def _make_safe_entity_id(name: str) -> str:
     return safe
 
 
-def _friendly_device_name(data: dict, mac_addr: str) -> str:
-    """Return a stable device name from Amplifi payload."""
-    def _normalize(value: str) -> str:
-        # Keep user-friendly names, but normalize whitespace for HA registry.
-        return " ".join(str(value).split())
-
-    if data is None:
-        return mac_addr.upper()
+def _friendly_device_name(data: dict, fallback: str) -> str:
+    """Best effort name used for HA device registry."""
     for key in ("Description", "description", "HostName", "host_name", "Address", "ip"):
-        if key in data and data[key]:
-            return _normalize(data[key])
-    return mac_addr.upper()
+        if data is not None and key in data and data[key]:
+            return " ".join(str(data[key]).split())
+    return fallback
 
 
 class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
@@ -155,46 +103,32 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     unique_id = None
 
     def __init__(
-        self, coordinator: AmplifiDataUpdateCoordinator, mac_addr, config_entry, initial_data=None
+        self, coordinator: AmplifiDataUpdateCoordinator, mac_addr, config_entry
     ):
         """Initialize amplifi wireless device tracker."""
         super().__init__(coordinator)
         self.unique_id = mac_addr
-        if initial_data is not None:
-            self._data = initial_data
-        elif mac_addr in coordinator.wifi_devices:
-            self._data = coordinator.wifi_devices[mac_addr]
-        elif mac_addr in coordinator.devices_info:
-            self._data = coordinator.devices_info[mac_addr]
-        else:
-            self._data = {}
+        self._data = coordinator.wifi_devices[mac_addr]
         self.config_entry = config_entry
-        self._connected = mac_addr in coordinator.wifi_devices
+        self._connected = True
 
         if self._data is not None and "Description" in self._data:
             self._name = f"{DOMAIN}_{self._data['Description']}"
-            self._description = self._data["Description"]
-        elif self._data is not None and "description" in self._data:
-            self._name = f"{DOMAIN}_{self._data['description']}"
-            self._description = self._data["description"]
+            self._description = self._data['Description']
         elif self._data is not None and "HostName" in self._data:
             self._name = f"{DOMAIN}_{self._data['HostName']}"
-            self._description = self._data["HostName"]
-        elif self._data is not None and "host_name" in self._data:
-            self._name = f"{DOMAIN}_{self._data['host_name']}"
-            self._description = self._data["host_name"]
+            self._description = self._data['HostName']
         elif self._data is not None and "Address" in self._data:
             self._name = f"{DOMAIN}_{self._data['Address']}"
-            self._description = self._data["Address"]
-        elif self._data is not None and "ip" in self._data:
-            self._name = f"{DOMAIN}_{self._data['ip']}"
-            self._description = self._data["ip"]
+            self._description = self._data['Address']
         else:
             self._name = f"{DOMAIN}_{self.unique_id}"
             self._description = self.unique_id.upper()
 
-        # Let HA generate entity_id to avoid collisions in the registry.
+        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
+        # This fixes: "sets an invalid entity ID" warning in HA 2026+
         self._name = _make_safe_entity_id(self._name)
+        self.entity_id = f'device_tracker.{self._name}'
 
     @property
     def name(self):
@@ -223,8 +157,6 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Return the primary ip address of the device."""
         if "Address" in self._data:
             return self._data["Address"]
-        if "ip" in self._data:
-            return self._data["ip"]
 
         return None
 
@@ -238,8 +170,6 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Return hostname of the device."""
         if "HostName" in self._data:
             return self._data["HostName"]
-        if "host_name" in self._data:
-            return self._data["host_name"]
 
         return None
 
@@ -260,20 +190,17 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
 
     @property
     def device_info(self):
-        """Attach entity to existing HA device by MAC when possible."""
-        device_name = _friendly_device_name(self._data, self.unique_id)
+        """Link tracker to a HA device via network MAC connection."""
         return {
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
             },
-            "name": device_name,
-            "default_name": device_name,
+            "default_name": _friendly_device_name(self._data, self.unique_id.upper()),
         }
 
     @property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
-        # Always enable by default to avoid hidden devices in the registry.
         return True
 
     # FIX: Removed the synchronous update() method that conflicted with the
@@ -299,8 +226,6 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         if self.unique_id in self.coordinator.wifi_devices:
             self._data = self.coordinator.wifi_devices[self.unique_id]
             self._connected = True
-        elif self.unique_id in self.coordinator.devices_info:
-            self._data = self.coordinator.devices_info[self.unique_id]
 
         _LOGGER.debug(
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
@@ -321,35 +246,19 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
     _is_device = False
     unique_id = None
 
-    def __init__(
-        self,
-        coordinator: AmplifiDataUpdateCoordinator,
-        identifier,
-        config_entry,
-        is_device,
-        initial_data=None,
-    ):
+    def __init__(self, coordinator: AmplifiDataUpdateCoordinator, identifier, config_entry, is_device):
         """Initialize amplifi ethernet device tracker."""
         super().__init__(coordinator)
         if is_device:
             self._mac_addr = identifier
             self._data_key = self._mac_addr
             self.unique_id = self._mac_addr
-            if initial_data is not None:
-                self._data = initial_data
-            elif self._data_key in coordinator.ethernet_devices:
-                self._data = coordinator.ethernet_devices[self._data_key]
-            elif self._data_key in coordinator.devices_info:
-                self._data = coordinator.devices_info[self._data_key]
-            else:
-                self._data = {}
+            self._data = coordinator.ethernet_devices[f"{self._data_key}"]
             self.config_entry = config_entry
 
             # Optional device info for connected Ethernet ports
             if self._mac_addr in coordinator.ethernet_devices:
                 self._device_info = coordinator.ethernet_devices[self._mac_addr]
-            elif self._mac_addr in coordinator.devices_info:
-                self._device_info = coordinator.devices_info[self._mac_addr]
 
             if self._device_info is not None and "description" in self._device_info:
                 self._name = f"{DOMAIN}_{self._data['description']}"
@@ -375,8 +284,11 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
 
         self._is_device = is_device
 
-        # Let HA generate entity_id to avoid collisions in the registry.
-        self._name = _make_safe_entity_id(self._name)
+        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
+        # This fixes: "sets an invalid entity ID" warning in HA 2026+
+        # Previously, names like "amplifi_NAS LAN1" (with spaces) were used directly.
+        safe_name = _make_safe_entity_id(self._name)
+        self.entity_id = f'device_tracker.{safe_name}'
 
     @property
     def name(self):
@@ -421,22 +333,19 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
 
     @property
     def device_info(self):
-        """Attach ethernet client trackers to existing HA devices by MAC."""
+        """Link ethernet client trackers to HA device by MAC."""
         if not self._is_device:
             return None
-        device_name = _friendly_device_name(self._data, self.unique_id)
         return {
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
             },
-            "name": device_name,
-            "default_name": device_name,
+            "default_name": _friendly_device_name(self._data, self.unique_id.upper()),
         }
 
     @property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
-        # Always enable by default to avoid hidden devices in the registry.
         return True
 
     # FIX: Removed the synchronous update() method that conflicted with the
@@ -460,8 +369,6 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
             self._data = self.coordinator.ethernet_ports[self._data_key]
         elif self._is_device and self._data_key in self.coordinator.ethernet_devices:
             self._data = self.coordinator.ethernet_devices[self._data_key]
-        elif self._is_device and self._data_key in self.coordinator.devices_info:
-            self._data = self.coordinator.devices_info[self._data_key]
 
         _LOGGER.debug(
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
