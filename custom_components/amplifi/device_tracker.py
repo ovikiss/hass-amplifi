@@ -109,6 +109,20 @@ def _make_safe_entity_id(name: str) -> str:
     return safe
 
 
+def _friendly_device_name(data: dict, mac_addr: str) -> str:
+    """Return a stable device name from Amplifi payload."""
+    def _normalize(value: str) -> str:
+        # Keep user-friendly names, but normalize whitespace for HA registry.
+        return " ".join(str(value).split())
+
+    if data is None:
+        return mac_addr.upper()
+    for key in ("Description", "description", "HostName", "host_name", "Address", "ip"):
+        if key in data and data[key]:
+            return _normalize(data[key])
+    return mac_addr.upper()
+
+
 class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     """Representing a wireless device connected to amplifi."""
 
@@ -225,10 +239,13 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     @property
     def device_info(self):
         """Attach entity to existing HA device by MAC when possible."""
+        device_name = _friendly_device_name(self._data, self.unique_id)
         return {
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
-            }
+            },
+            "name": device_name,
+            "default_name": device_name,
         }
 
     @property
@@ -385,10 +402,13 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
         """Attach ethernet client trackers to existing HA devices by MAC."""
         if not self._is_device:
             return None
+        device_name = _friendly_device_name(self._data, self.unique_id)
         return {
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
-            }
+            },
+            "name": device_name,
+            "default_name": device_name,
         }
 
     @property
