@@ -27,6 +27,7 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
         self._hostname = hostname
         self._password = password
         self._wifi_devices = {}
+        self._devices_info = {}
         self._ethernet_ports = {}
         self._ethernet_devices = {}
         self._wan_speeds = {"download": 0, "upload": 0}
@@ -52,6 +53,7 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
         # listener tracking, which causes "Task exception was never retrieved"
         # because the callbacks are scheduled as bare tasks without error handling.
         self.async_add_listener(self.extract_wifi_devices)
+        self.async_add_listener(self.extract_devices_info)
         self.async_add_listener(self.extract_ethernet_ports)
         self.async_add_listener(self.extract_ethernet_devices)
         self.async_add_listener(self.extract_wan_speeds)
@@ -87,6 +89,13 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
                             wifi_devices[macAddr] = device_info
 
         self._wifi_devices = wifi_devices
+
+    def extract_devices_info(self):
+        """Extract known devices info from raw response."""
+        if self.data is None:
+            return
+        if len(self.data) > DEVICES_INFO_IDX and self.data[DEVICES_INFO_IDX]:
+            self._devices_info = self.data[DEVICES_INFO_IDX]
 
     def extract_ethernet_ports(self):
         if self.data is None:
@@ -161,6 +170,11 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
     def wifi_devices(self):
         """Return the wifi devices."""
         return self._wifi_devices
+
+    @property
+    def devices_info(self):
+        """Return known devices info."""
+        return self._devices_info
 
     @property
     def ethernet_ports(self):
