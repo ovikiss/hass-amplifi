@@ -26,8 +26,16 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     @callback
     def async_discover_device_tracker():
         """Discover and add a discovered device_tracker."""
+        domain_data = hass.data.get(DOMAIN, {})
+        entry_data = domain_data.get(config_entry.entry_id)
+        # During unload/reload coordinator listeners may still fire briefly.
+        # Bail out cleanly instead of raising KeyError.
+        if entry_data is None:
+            return
+        entities = entry_data[ENTITIES]
+
         for mac_addr in coordinator.wifi_devices:
-            if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
+            if mac_addr not in entities:
                 async_add_entities(
                     [
                         AmplifiWifiDeviceTracker(
@@ -41,7 +49,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         is_device = False
         for port in range(0, 5):
             port_unique_id = f"{DOMAIN}_eth_port_{port}"
-            if port_unique_id not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
+            if port_unique_id not in entities:
                 async_add_entities(
                     [
                         AmplifiEthernetDeviceTracker(
@@ -55,7 +63,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
         is_device = True
         for mac_addr in coordinator.ethernet_devices:
-            if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
+            if mac_addr not in entities:
                 async_add_entities(
                     [
                         AmplifiEthernetDeviceTracker(
@@ -67,15 +75,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     ]
                 )
 
-    @callback
-    def async_unsub_discover_device_tracker():
-        """Stop discovery when config entry is removed."""
-        coordinator.async_remove_listener(async_discover_device_tracker)
-
     async_discover_device_tracker()
-
-    coordinator.async_add_listener(async_discover_device_tracker)
-    config_entry.async_on_unload(async_unsub_discover_device_tracker)
+    remove_listener = coordinator.async_add_listener(async_discover_device_tracker)
+    config_entry.async_on_unload(remove_listener)
 
 
 def _make_safe_entity_id(name: str) -> str:
