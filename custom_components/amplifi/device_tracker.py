@@ -144,10 +144,8 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
             self._name = f"{DOMAIN}_{self.unique_id}"
             self._description = self.unique_id.upper()
 
-        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
-        # This fixes: "sets an invalid entity ID" warning in HA 2026+
+        # Let HA generate entity_id to avoid collisions in the registry.
         self._name = _make_safe_entity_id(self._name)
-        self.entity_id = f'device_tracker.{self._name}'
 
     @property
     def name(self):
@@ -302,11 +300,8 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
 
         self._is_device = is_device
 
-        # FIX: Use _make_safe_entity_id to ensure no spaces or invalid chars
-        # This fixes: "sets an invalid entity ID" warning in HA 2026+
-        # Previously, names like "amplifi_NAS LAN1" (with spaces) were used directly.
-        safe_name = _make_safe_entity_id(self._name)
-        self.entity_id = f'device_tracker.{safe_name}'
+        # Let HA generate entity_id to avoid collisions in the registry.
+        self._name = _make_safe_entity_id(self._name)
 
     @property
     def name(self):
