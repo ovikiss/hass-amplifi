@@ -6,6 +6,7 @@ from datetime import datetime
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
 from homeassistant.components.device_tracker import SourceType
+from homeassistant.helpers import device_registry as dr
 from homeassistant.core import callback
 from homeassistant.util import slugify
 from .const import DOMAIN, COORDINATOR, COORDINATOR_LISTENER, ENTITIES, CONF_ENABLE_NEW_DEVICES
@@ -222,6 +223,15 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
         return {}
 
     @property
+    def device_info(self):
+        """Attach entity to existing HA device by MAC when possible."""
+        return {
+            "connections": {
+                (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
+            }
+        }
+
+    @property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
         # Always enable by default to avoid hidden devices in the registry.
@@ -369,6 +379,17 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
         if self.coordinator.last_update_success and self._data is not None:
             return {**self._data, "last_seen": datetime.now().isoformat()}
         return {}
+
+    @property
+    def device_info(self):
+        """Attach ethernet client trackers to existing HA devices by MAC."""
+        if not self._is_device:
+            return None
+        return {
+            "connections": {
+                (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
+            }
+        }
 
     @property
     def entity_registry_enabled_default(self) -> bool:
