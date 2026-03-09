@@ -7,6 +7,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.components.device_tracker.config_entry import ScannerEntity
 from homeassistant.components.device_tracker import SourceType
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.core import callback
 from homeassistant.util import slugify
 from .const import DOMAIN, COORDINATOR, COORDINATOR_LISTENER, ENTITIES, CONF_ENABLE_NEW_DEVICES
@@ -25,6 +26,18 @@ def _normalize_connection(value) -> str:
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Add sensors for passed config_entry in HA."""
+    # Old versions created many client trackers as disabled-by-default.
+    # Re-enable them so all discovered clients become visible without manual registry edits.
+    ent_reg = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(ent_reg, config_entry.entry_id):
+        if entity.domain != "device_tracker":
+            continue
+        if entity.unique_id is None:
+            continue
+        if str(entity.unique_id).startswith(f"{DOMAIN}_eth_port_"):
+            continue
+        if entity.disabled_by is not None:
+            ent_reg.async_update_entity(entity.entity_id, disabled_by=None)
 
     coordinator: AmplifiDataUpdateCoordinator = hass.data[DOMAIN][
         config_entry.entry_id
