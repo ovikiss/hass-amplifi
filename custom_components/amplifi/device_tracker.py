@@ -64,8 +64,19 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     ]
                 )
 
+        # Add ethernet devices (connected or known). If devices_info is missing,
+        # fall back to connected ethernet devices only.
+        if coordinator.devices_info:
+            ethernet_iter = [
+                (mac, info)
+                for mac, info in coordinator.devices_info.items()
+                if info.get("connection") == "ethernet"
+            ]
+        else:
+            ethernet_iter = [(mac, None) for mac in coordinator.ethernet_devices]
+
         is_device = True
-        for mac_addr in coordinator.ethernet_devices:
+        for mac_addr, info in ethernet_iter:
             if mac_addr not in hass.data[DOMAIN][config_entry.entry_id][ENTITIES]:
                 async_add_entities(
                     [
@@ -74,6 +85,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                             mac_addr,
                             config_entry,
                             is_device,
+                            info if mac_addr not in coordinator.ethernet_devices else None,
                         )
                     ]
                 )
@@ -212,10 +224,8 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
     @property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
-        if self.config_entry.data.get(CONF_ENABLE_NEW_DEVICES, False):
-            return True
-
-        return False
+        # Always enable by default to avoid hidden devices in the registry.
+        return True
 
     # FIX: Removed the synchronous update() method that conflicted with the
     # CoordinatorEntity pattern and caused "Task exception was never retrieved".
@@ -262,19 +272,35 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
     _is_device = False
     unique_id = None
 
-    def __init__(self, coordinator: AmplifiDataUpdateCoordinator, identifier, config_entry, is_device):
+    def __init__(
+        self,
+        coordinator: AmplifiDataUpdateCoordinator,
+        identifier,
+        config_entry,
+        is_device,
+        initial_data=None,
+    ):
         """Initialize amplifi ethernet device tracker."""
         super().__init__(coordinator)
         if is_device:
             self._mac_addr = identifier
             self._data_key = self._mac_addr
             self.unique_id = self._mac_addr
-            self._data = coordinator.ethernet_devices[f"{self._data_key}"]
+            if initial_data is not None:
+                self._data = initial_data
+            elif self._data_key in coordinator.ethernet_devices:
+                self._data = coordinator.ethernet_devices[self._data_key]
+            elif self._data_key in coordinator.devices_info:
+                self._data = coordinator.devices_info[self._data_key]
+            else:
+                self._data = {}
             self.config_entry = config_entry
 
             # Optional device info for connected Ethernet ports
             if self._mac_addr in coordinator.ethernet_devices:
                 self._device_info = coordinator.ethernet_devices[self._mac_addr]
+            elif self._mac_addr in coordinator.devices_info:
+                self._device_info = coordinator.devices_info[self._mac_addr]
 
             if self._device_info is not None and "description" in self._device_info:
                 self._name = f"{DOMAIN}_{self._data['description']}"
@@ -347,13 +373,8 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
     @property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
-        if self._is_device:
-            if self.config_entry.data.get(CONF_ENABLE_NEW_DEVICES, False):
-                return True
-            else:
-                return False
-        else:
-            return True
+        # Always enable by default to avoid hidden devices in the registry.
+        return True
 
     # FIX: Removed the synchronous update() method that conflicted with the
     # CoordinatorEntity pattern and caused "Task exception was never retrieved".
@@ -376,6 +397,8 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
             self._data = self.coordinator.ethernet_ports[self._data_key]
         elif self._is_device and self._data_key in self.coordinator.ethernet_devices:
             self._data = self.coordinator.ethernet_devices[self._data_key]
+        elif self._is_device and self._data_key in self.coordinator.devices_info:
+            self._data = self.coordinator.devices_info[self._data_key]
 
         _LOGGER.debug(
             f"entity={self.unique_id} was updated via _handle_coordinator_update"
