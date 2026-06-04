@@ -4,8 +4,7 @@ import logging
 
 from datetime import datetime
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.components.device_tracker.config_entry import ScannerEntity
-from homeassistant.components.device_tracker import SourceType
+from homeassistant.components.device_tracker import ScannerEntity, SourceType
 from homeassistant.helpers import device_registry as dr
 from homeassistant.core import callback
 from homeassistant.util import slugify
