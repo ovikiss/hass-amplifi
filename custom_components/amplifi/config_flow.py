@@ -30,7 +30,12 @@ async def validate_input(hass: core.HomeAssistant, data: dict):
 
     jar = aiohttp.CookieJar(unsafe=True)
     session = async_create_clientsession(hass, False, True, cookie_jar=jar)
-    client = AmplifiClient(session, data[CONF_HOST], data[CONF_PASSWORD])
+    client = AmplifiClient(
+        session,
+        data[CONF_HOST],
+        data[CONF_PASSWORD],
+        is_shutting_down=lambda: not hass.is_running,
+    )
 
     result = await client.async_test_connection()
     if not result:

@@ -12,11 +12,12 @@ class AmplifiClientError(Exception):
 
 
 class AmplifiClient:
-    def __init__(self, client, host: str, password: str):
+    def __init__(self, client, host: str, password: str, is_shutting_down=None):
         """Initialise the Amplifi client."""
         self._client = client
         self._host = host
         self._password = password
+        self._is_shutting_down = is_shutting_down or (lambda: False)
         self._base_url = f"http://{self._host}"
         self._login_token = None
         self._info_token = None
@@ -91,8 +92,11 @@ class AmplifiClient:
                 devices = await resp.json()
                 return devices
             except Exception as error:
-                _LOGGER.error("[GET] '%s' - failed (attempt %s)" % (info_async_url, attempt))
-                _LOGGER.error(error)
+                if self._is_shutting_down() and getattr(self._client, "closed", False):
+                    _LOGGER.debug("[GET] '%s' cancelled because Home Assistant is shutting down", info_async_url)
+                else:
+                    _LOGGER.error("[GET] '%s' - failed (attempt %s)" % (info_async_url, attempt))
+                    _LOGGER.error(error)
                 self._handle_client_failure()
 
         raise AmplifiClientError("Failed to get devices from router.")

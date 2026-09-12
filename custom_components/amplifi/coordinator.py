@@ -38,7 +38,10 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
             hass, False, True, cookie_jar=self._jar
         )
         self._client = AmplifiClient(
-            self._client_sesssion, self._hostname, self._password
+            self._client_sesssion,
+            self._hostname,
+            self._password,
+            is_shutting_down=lambda: not hass.is_running,
         )
 
         # TODO: Make this a configurable value
@@ -64,6 +67,9 @@ class AmplifiDataUpdateCoordinator(DataUpdateCoordinator):
             async with asyncio.timeout(10):
                 devices = await self._client.async_get_devices()
         except (AmplifiClientError, ClientConnectorError) as error:
+            if not self.hass.is_running:
+                _LOGGER.debug("Skipping Amplifi refresh because Home Assistant is shutting down")
+                return self.data
             raise UpdateFailed(error) from error
         return devices
 
