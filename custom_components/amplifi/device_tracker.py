@@ -196,7 +196,7 @@ class AmplifiWifiDeviceTracker(CoordinatorEntity, ScannerEntity):
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
             },
-            "default_name": _friendly_device_name(self._data, self.unique_id.upper()),
+            "name": _friendly_device_name(self._data, self.unique_id.upper()),
         }
 
     @property
@@ -341,7 +341,7 @@ class AmplifiEthernetDeviceTracker(CoordinatorEntity, ScannerEntity):
             "connections": {
                 (dr.CONNECTION_NETWORK_MAC, dr.format_mac(self.unique_id))
             },
-            "default_name": _friendly_device_name(self._data, self.unique_id.upper()),
+            "name": _friendly_device_name(self._data, self.unique_id.upper()),
         }
 
     @property
